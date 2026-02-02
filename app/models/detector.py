@@ -2,30 +2,32 @@ import torch
 import numpy as np
 import librosa
 from transformers import Wav2Vec2FeatureExtractor, Wav2Vec2Model, pipeline
+from torch.nn import CosineSimilarity
 
 class VoiceDetector:
     _instance = None
     
     def __init__(self):
-        # 1. Load Audio Feature Model (Web2Vec2 for Deepfake detection)
-        self.model_name = "facebook/wav2vec2-large-xlsr-53"
-        print(f"Loading Security Model: {self.model_name} ...")
-        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.model_name)
-        self.model = Wav2Vec2Model.from_pretrained(self.model_name)
+        # 1. Primary AI Voice Detector (Acoustic Features)
+        self.wav2vec_name = "facebook/wav2vec2-large-xlsr-53"
+        print(f"Loading Acoustic Model: {self.wav2vec_name} ...")
+        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(self.wav2vec_name)
+        self.model = Wav2Vec2Model.from_pretrained(self.wav2vec_name)
         self.model.eval()
         
-        # 2. Load Speech-to-Text Model (Whisper for Transcript)
-        print("Loading Whisper Model for Transcription...")
-        # Using "openai/whisper-tiny.en" for speed and English focus. 
-        # Remove ".en" if multilingual needed, but tiny is best for speed.
-        self.transcriber = pipeline("automatic-speech-recognition", model="openai/whisper-tiny.en")
+        # 2. Secondary Semantics & Cadence Model (Whisper)
+        print("Loading Semantic Model (Whisper Small)...")
+        # UPGRADE: Using "small" for better embeddings/multilingual support
+        self.transcriber = pipeline(
+            "automatic-speech-recognition", 
+            model="openai/whisper-small"
+        )
         print("All Models loaded successfully.")
         
-        # Simulated "Kaggle Fraud Dataset" - Common trigger words
         self.fraud_keywords = {
-            "financial": ["bank", "account", "credit card", "cvv", "pin", "verify", "blocked", "suspended"],
-            "urgency": ["immediately", "urgent", "expires", "arrest", "police", "legal action", "warrant"],
-            "scams": ["lottery", "winner", "refund", "gift card", "tech support", "virus", "hacked"]
+            "financial": ["bank", "account", "credit", "debit", "card", "cvv", "pin", "verify", "blocked", "suspended"],
+            "urgency": ["immediately", "urgent", "expires", "arrest", "police", "legal", "warrant", "action"],
+            "scams": ["lottery", "winner", "refund", "gift card", "tech support", "virus", "hacked", "lucky", "draw"]
         }
 
     @classmethod
@@ -34,104 +36,110 @@ class VoiceDetector:
             cls._instance = cls()
         return cls._instance
 
-    def _analyze_audio_sentiment(self, audio_array: np.ndarray):
+    def _calculate_smoothness(self, embeddings: torch.Tensor) -> float:
         """
-        Heuristic for Voice Sentiment/Urgency using signal processing.
+        Calculates temporal smoothness.
+        AI voices tend to have higher frame-to-frame cosine similarity (less 'jitter').
         """
-        # 1. Energy (RMS)
-        rms = librosa.feature.rms(y=audio_array).mean()
-        
-        # 2. Spectral Centroid (associated with "brightness" or aggression)
-        cent = librosa.feature.spectral_centroid(y=audio_array, sr=16000).mean()
-        
-        sentiment = "Neutral"
-        urgency_score = 0.0
-        
-        if rms > 0.05 or cent > 2500:
-            sentiment = "Urgent/Aggressive"
-            urgency_score = 0.8
-        elif rms < 0.005:
-            sentiment = "Whisper/Quiet"
-            urgency_score = 0.1
+        # Embeddings shape: [1, Sequence_Length, Hidden_Size]
+        # We compare frame T with frame T+1
+        if embeddings.shape[1] < 2:
+            return 0.0
             
-        return sentiment, urgency_score
+        cos = CosineSimilarity(dim=1, eps=1e-6)
+        # Compare all frames with their next frame
+        similarity = cos(embeddings[0, :-1, :], embeddings[0, 1:, :])
+        return float(similarity.mean().item())
 
     def detect_fraud(self, audio_array: np.ndarray, provided_transcript: str = None):
         """
-        Cybersecurity Logic with Auto-Transcription & Sentiment
+        Hackathon Logic:
+        1. Primary: AI Voice Classification (from Audio Signal)
+        2. Secondary: Fraud Risk (from Keywords)
         """
-        # --- PHASE 1: TRANSCRIPTION ---
-        # If no transcript provided, generate one from audio
+        
+        # --- STEP 1: TRANSCRIPTION (Semantic Layer) ---
         final_transcript = provided_transcript
         if not final_transcript:
             try:
-                # Whisper pipeline expects raw audio or file path. 
-                # We can pass the numpy array directly since we sampled at 16k which whisper generally handles 
-                # (though usually expects 16k).
-                # Note: Pipeline implementation handles some resampling but good to ensure compatible input.
-                result = self.transcriber(audio_array)
+                # Force translate to English so keywords work universally
+                # Input: simple numpy array (float32)
+                result = self.transcriber(audio_array.astype(np.float32), generate_kwargs={"task": "translate"})
                 final_transcript = result.get("text", "")
             except Exception as e:
-                print(f"Transcription Warning: {e}")
+                print(f"Transcription Error: {e}")
                 final_transcript = ""
 
-        # --- PHASE 2: DEEPFAKE DETECTION ---
+        # --- STEP 2: ACOUSTIC ANALYSIS (AI Detection) ---
         inputs = self.feature_extractor(audio_array, sampling_rate=16000, return_tensors="pt", padding=True)
         with torch.no_grad():
             outputs = self.model(**inputs)
-        embeddings = outputs.last_hidden_state[0].numpy() 
         
-        time_variance = np.var(embeddings, axis=0).mean()
-        ai_score = 1.0 / (1.0 + time_variance * 20.0) 
-        ai_score = float(np.clip(ai_score, 0.0, 1.0))
+        embeddings = outputs.last_hidden_state # Shape: [1, Time, 1024]
         
-        # --- PHASE 3: SENTIMENT ---
-        voice_sentiment, urgency_score = self._analyze_audio_sentiment(audio_array)
+        # Metric A: Variance (Richness)
+        # Real voices have high variance (ups/downs). AI is often "flatter" or more uniform.
+        np_embeds = embeddings[0].numpy()
+        time_variance = np.var(np_embeds, axis=0).mean()
+        
+        # Metric B: Smoothness (Robotic-ness)
+        # AI voices often transition too smoothly between phonemes.
+        smoothness = self._calculate_smoothness(embeddings)
+        
+        # --- SCORING LOGIC ---
+        # Heuristic: High Smoothness + Low Variance -> AI
+        # Normalizing scores (approximate ranges based on XLS-R-53 behavior)
+        # Variance usually 0.005 (low) to 0.05 (high)
+        # Smoothness usually 0.90 (rough) to 0.99 (smooth)
+        
+        conf_smooth = (smoothness - 0.90) * 10 # Scale up small differences
+        conf_var = 1.0 - (time_variance * 20)  # Invert variance
+        
+        ai_confidence = (conf_smooth + conf_var) / 2.0
+        ai_confidence = float(np.clip(ai_confidence, 0.0, 1.0))
 
-        # --- PHASE 4: KEYWORDS ---
+        classification = "AI" if ai_confidence > 0.5 else "Human"
+        
+        explanation = []
+        if conf_smooth > 0.6:
+            explanation.append("High temporal smoothness (robotic consistency)")
+        if conf_var > 0.6:
+            explanation.append("Low embedding variance (lack of natural emotion)")
+        if not explanation:
+            explanation.append("Natural voice patterns detected")
+
+        # --- STEP 3: CONTENT RISK (Keywords) ---
         keyword_hits = []
         if final_transcript:
             text = final_transcript.lower()
             for category, words in self.fraud_keywords.items():
                 for word in words:
                     if word in text:
-                        keyword_hits.append(f"{category}:{word}")
+                        keyword_hits.append(word) # Just the word
 
-        # --- PHASE 5: THREAT ASSESSMENT ---
-        threat_level = "Low"
-        alert = "No immediate threats detected."
-        is_fraud = False
+        fraud_risk = "LOW"
+        if len(keyword_hits) >= 1:
+            fraud_risk = "MEDIUM"
+        if len(keyword_hits) >= 3 or ("otp" in keyword_hits) or ("bank" in keyword_hits):
+            fraud_risk = "HIGH"
 
-        total_risk = ai_score * 0.5 
-        
-        if keyword_hits:
-            total_risk += 0.3
-        
-        if urgency_score > 0.6:
-            total_risk += 0.1
-
-        if total_risk > 0.5:
-            is_fraud = True
-            if total_risk > 0.7:
-                threat_level = "High"
-                alert = "CRITICAL: High-risk call detected."
-            else:
-                threat_level = "Medium"
-                alert = "WARNING: Suspicious patterns detected."
-        
-        if ai_score > 0.6:
-             alert += " Potential Deepfake."
+        # --- STEP 4: OVERALL RISK ---
+        overall_risk = "SAFE"
+        if classification == "AI" and fraud_risk != "LOW":
+             overall_risk = "CRITICAL" # Al + Scam Words = Dangerous
+        elif classification == "AI":
+             overall_risk = "WARNING" # AI but innocuous text
+        elif fraud_risk == "HIGH":
+             overall_risk = "WARNING" # Human but asking for OTP
 
         return {
-            "threat_level": threat_level,
-            "is_fraud": is_fraud,
-            "alert": alert,
-            "transcript_preview": final_transcript[:200] + "..." if len(final_transcript) > 200 else final_transcript,
-            "analysis": {
-                "voice_type": "AI" if ai_score > 0.5 else "Human",
-                "sentiment": voice_sentiment,
-                "keywords_detected": keyword_hits
-            }
+            "classification": classification,
+            "confidence": round(ai_confidence, 2),
+            "explanation": " + ".join(explanation),
+            "fraud_risk": fraud_risk,
+            "risk_keywords": list(set(keyword_hits)), # Unique
+            "overall_risk": overall_risk,
+            "transcript_preview": final_transcript # Added as requested
         }
 
 # Global instance

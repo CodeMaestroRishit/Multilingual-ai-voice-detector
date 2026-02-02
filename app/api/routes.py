@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 from app.api.auth import verify_api_key
 from app.utils.audio import process_audio_input
 from app.models.detector import get_detector
@@ -10,20 +10,18 @@ router = APIRouter()
 class DetectRequest(BaseModel):
     audio_base64: Optional[str] = None
     audio_url: Optional[str] = None
-    transcript: Optional[str] = None # Optional override, otherwise auto-generated
+    transcript: Optional[str] = None 
     message: Optional[str] = None
 
-class AnalysisDetail(BaseModel):
-    voice_type: str
-    sentiment: str
-    keywords_detected: List[str]
-
+# Hackathon Exact Format
 class DetectResponse(BaseModel):
-    threat_level: str
-    is_fraud: bool
-    alert: str
-    transcript_preview: str # Returning what the model heard
-    analysis: AnalysisDetail
+    classification: str       # "AI" | "Human"
+    confidence: float         # 0.0 - 1.0
+    explanation: str
+    fraud_risk: str           # "HIGH" | "LOW"
+    risk_keywords: List[str]
+    overall_risk: str         # "CRITICAL" | "SAFE"
+    transcript_preview: str   # Added Feature
 
 @router.post("/detect", response_model=DetectResponse, dependencies=[Depends(verify_api_key)])
 async def detect_voice(request: DetectRequest):
@@ -42,7 +40,6 @@ async def detect_voice(request: DetectRequest):
 
     try:
         detector = get_detector()
-        # Pass transcript only if user forced one, otherwise let model generate it
         result = detector.detect_fraud(audio_array, provided_transcript=request.transcript)
         return result
     except Exception as e:
