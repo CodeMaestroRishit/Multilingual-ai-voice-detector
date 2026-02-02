@@ -1,70 +1,101 @@
-# AI Voice Detection API
+# SecureCall - AI Voice Fraud Detector
 
-Backend API for detecting AI-generated voices using `facebook/wav2vec2-large-xlsr-53`.
+A Cybersecurity API that detects:
+1.  **AI/Deepfake Voices** (using Wav2Vec2 audio analysis).
+2.  **Scam/Fraud Keywords** (using OpenAI Whisper for transcription).
+3.  **Urgency/Aggression** (using audio signal processing).
 
-## Setup & Run
+## 🚀 Setup & Run
 
-### 1. Local (Mac)
+### Prerequisites
+1.  **Python 3.10+**
+2.  **FFmpeg** (Required for audio processing)
 
-**Prerequisites:**
-- Python 3.10+
-- `ffmpeg` (install via `brew install ffmpeg`)
-- `libsndfile` (install via `brew install libsndfile`)
+---
 
-**Steps:**
+### Mac / Linux Setup
+1.  **Install FFmpeg**:
+    ```bash
+    brew install ffmpeg
+    # OR
+    sudo apt install ffmpeg
+    ```
+
+2.  **Setup Environment**:
+    ```bash
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+    ```
+
+3.  **Run Server**:
+    ```bash
+    uvicorn app.main:app --reload
+    ```
+
+---
+
+### Windows Setup (For Team)
+1.  **Install FFmpeg**:
+    *   **Option A (Winget)**: Run `winget install "FFmpeg (Essentials)"` in PowerShell.
+    *   **Option B (Chocolatey)**: Run `choco install ffmpeg`.
+    *   **Option C (Manual)**: Download from [ffmpeg.org](https://ffmpeg.org/download.html), extract, and add the `bin` folder to your System PATH.
+
+2.  **Setup Environment**:
+    Open PowerShell or Command Prompt:
+    ```powershell
+    python -m venv venv
+    .\venv\Scripts\activate
+    pip install -r requirements.txt
+    ```
+    *Note: If you get a permission error on step 2, run `Set-ExecutionPolicy Unrestricted -Scope Process` first.*
+
+3.  **Run Server**:
+    ```powershell
+    uvicorn app.main:app --reload
+    ```
+
+---
+
+## 🧪 How to Test
+
+### 1. Verification Script (Easiest)
+We have a Python script that automatically handles the API request.
+
+**Run on Mac/Linux:**
 ```bash
-# 1. Create virtual env
-python3 -m venv venv
-source venv/bin/activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run the server
-uvicorn app.main:app --reload
+python3 test_api.py
 ```
 
-### 2. Docker
-
-```bash
-# Build
-docker build -t voice-detector .
-
-# Run (Port 8000)
-docker run -p 8000:8000 voice-detector
+**Run on Windows:**
+```powershell
+python test_api.py
 ```
 
-## Usage API
+*To test your own local file, open `test_api.py` and edit the file path at the bottom.*
 
-**Headers:**
-- `X-API-Key`: `demo_key_123` (or set via `API_KEY` env var)
+### 2. Manual Test (Base64 / URL)
+**Endpoint**: `POST /detect`
+**Header**: `X-API-Key: demo_key_123`
 
-### Health Check
-```bash
-curl -X GET http://localhost:8000/health
+```json
+{
+  "audio_url": "https://upload.wikimedia.org/wikipedia/commons/c/c8/Example.ogg",
+  "transcript": "Optional text override"
+}
 ```
 
-### Detect Voice (via URL)
-```bash
-curl -X POST http://localhost:8000/detect \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: demo_key_123" \
-  -d '{
-    "audio_url": "https://www2.cs.uic.edu/~i101/SoundFiles/BabyElephantWalk60.wav"
-  }'
+## 🛡️ Response format
+```json
+{
+  "threat_level": "High",
+  "is_fraud": true,
+  "alert": "CRITICAL: High-risk call detected...",
+  "transcript_preview": "TEXT HEARD BY MODEL...",
+  "analysis": {
+    "voice_type": "AI",
+    "sentiment": "Urgent/Aggressive",
+    "keywords_detected": ["urgency:arrest"]
+  }
+}
 ```
-
-### Detect Voice (via Base64)
-*(Truncated for validity, replace `...` with real base64 mp3 data)*
-```bash
-curl -X POST http://localhost:8000/detect \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: demo_key_123" \
-  -d '{
-    "audio_base64": "SUQzBAAAAAAA..."
-  }'
-```
-
-## Notes
-- **Model Download**: On first run, the app will download ~1.2GB model weights. This may take a few minutes.
-- **Detector**: Currently uses a heuristic based on embedding variance. This is a baseline MVP.
