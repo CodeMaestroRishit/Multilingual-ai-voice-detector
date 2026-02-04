@@ -10,3 +10,5 @@ python-dotenv==1.0.1
 python-multipart==0.0.7
 numpy==1.26.4
 scipy==1.12.0
+noisereduce==3.0.0
+av==14.0.1

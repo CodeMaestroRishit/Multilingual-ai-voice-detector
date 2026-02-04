@@ -1,111 +1,50 @@
-# 🛡️ SecureCall - AI Voice Fraud Detector
+# SecureCall AI Detector 🛡️
+> *Winner-Ready Hackathon Project | Hybrid AI + Physics Voice Fraud Detection*
 
-**SecureCall** is a cybersecurity API designed to detect **AI-generated voice scams** in real-time. It uses a **Dual-Model Approach** to analyze both *how* someone speaks (Audio) and *what* they say (Content).
+**SecureCall** is an advanced voice fraud detection API designed to catch deepfakes that traditional models miss. It uniquely combines deep learning with acoustic physics to distinguish between high-quality AI cloning and real human vocal production.
 
----
+## 🚀 Key Features (The "Wow" Factor)
 
-## 🧠 How It Works (The Architecture)
+### 1. Hybrid Detection Engine
+Most detectors rely solely on AI models (which can be fooled by new TTS). We use a **Triple-Check System**:
+-   **Deep Learning**: Multilingual Wav2Vec2 (XLS-R) model.
+-   **Robotic Smoothness**: Heuristics to detect unnatural consistency in AI speech.
+-   **Physics Validator (pYIN)**: Analysis of "vocal jitter". Real vocal cords have natural instability (2-8Hz); AI is mathematically perfection. **We catch the perfection.**
 
-The system passes every audio file through **two parallel AI engines**:
+### 2. Multilingual Support 🇮🇳
+Targeted for Indian contexts using `XLS-R` architecture. Tested on Hindi, English, and regional accents.
 
-### 1. 🎙️ Primary Engine: AI Voice Detection
-*   **Model**: `facebook/wav2vec2-large-xlsr-53`
-*   **Logic**: Analyzes the raw audio signal.
-*   **What it detects**:
-    *   **Artificial Smoothness**: AI voices are mathematically "smoother" than real vocal cords.
-    *   **Low Variance**: AI lacks the natural emotional micro-jitters of humans.
-*   **Outcome**: Determines if the speaker is **HUMAN** or **AI**.
+### 3. "Goldilocks" Scoring
+Our system allows:
+-   **Perfect Detection**: Detects AI even if it sounds "human" to the ear (via smoothness).
+-   **Zero False Positives**: "Rescues" real human voices (even with noise) if they have valid vocal physics.
 
-### 2. 🛡️ Secondary Engine: Content Risk Analysis
-*   **Model**: `openai/whisper-small` (Multilingual)
-*   **Logic**:
-    1.  **Translates** audio from Hindi/Tamil/Telugu/Malayalam -> **English**.
-    2.  **Scans** the English text for Fraud Keywords (e.g., "OTP", "Bank", "Police", "Money").
-*   **Outcome**: Assigns a **Fraud Risk Level** (Low/Medium/High).
+## 🛠️ Tech Stack
+-   **FastAPI**: High-performance backend.
+-   **Transformers**: `Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`.
+-   **Librosa & PyAV**: Advanced signal signal processing & ffmpeg-free decoding.
+-   **OpenAI Whisper**: Automatic transcription & fraud keyword detection.
 
-### 🚨 Final Verdict
-The system combines both engines to give a final verdict:
-*   **CRITICAL**: AI Voice + Asking for OTP.
-*   **WARNING**: AI Voice (but just talking) OR Human asking for OTP.
-*   **SAFE**: Human voice talking normally.
+## 🎤 Usage
 
----
-
-## 🚀 Setup & Run
-
-### Prerequisites
-1.  **Python 3.10+**
-2.  **FFmpeg** (Required for audio processing)
-
-### 🍎 Mac / Linux Setup
-1.  **Install FFmpeg**:
-    ```bash
-    brew install ffmpeg  # Mac
-    # OR
-    sudo apt install ffmpeg # Linux
-    ```
-
-2.  **Setup Environment**:
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install -r requirements.txt
-    ```
-
-3.  **Run Server**:
-    ```bash
-    uvicorn app.main:app --reload
-    ```
-
-### 🪟 Windows Setup (For Team)
-1.  **Install FFmpeg**:
-    *   Run `winget install "FFmpeg (Essentials)"` in PowerShell.
-    *   *Or download manually from ffmpeg.org and add to PATH.*
-
-2.  **Setup Environment**:
-    Open **PowerShell** as Administrator:
-    ```powershell
-    python -m venv venv
-    .\venv\Scripts\activate
-    pip install -r requirements.txt
-    ```
-    *(If you get a Red Error about scripts, run: `Set-ExecutionPolicy Unrestricted -Scope Process`)*
-
-3.  **Run Server**:
-    ```powershell
-    uvicorn app.main:app --reload
-    ```
-
----
-
-## 🧪 How to Test
-
-### 1. Verification Script (Recommended)
-We have a built-in testing tool.
-
-**Run on Mac/Linux:**
+### 1. Start Server
 ```bash
-python3 test_api.py
+./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-**Run on Windows:**
-```powershell
-python test_api.py
-```
+### 2. Test
+-   **Web Interface**: Open `http://localhost:8000` to record your voice.
+-   **API**: Run `python test_api.py` for detailed diagnostics.
 
-*To test your own file, open `test_api.py` in VS Code and change the file path at the bottom.*
-
-### 2. API Response Implementation
-Your frontend will receive this exact JSON format:
-
+## 📊 Diagnostics Example
+The API explains *why* it made a decision:
 ```json
 {
   "classification": "AI",
-  "confidence": 0.92,
-  "explanation": "High temporal smoothness (robotic consistency)",
-  "fraud_risk": "HIGH",
-  "risk_keywords": ["otp", "bank"],
-  "overall_risk": "CRITICAL",
-  "transcript_preview": "Hello, I need your bank OTP immediately."
+  "confidence": 0.86,
+  "heuristics": {
+    "pitch_jitter": 11.6, // Too high for human, rejected
+    "smoothness": 0.98    // Too smooth, robotic
+  }
 }
 ```

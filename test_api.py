@@ -12,14 +12,17 @@ def print_result(data, file_label):
     print(f"    Classification : {data['classification'].upper()}")
     print(f"    Confidence     : {int(data['confidence'] * 100)}%")
     print(f"    Reasoning      : {data['explanation']}")
+    print(f"    Debug Model    : Probs={data.get('debug_probs')}, Labels={data.get('debug_labels')}")
+    print(f"    Physics        : Jitter={data.get('pitch_jitter',0)}Hz, Std={data.get('pitch_std',0)}Hz")
+    print(f"    Heuristics     : PitchScore={data.get('pitch_human_score',0)}, Smooth={data.get('smoothness_score',0)}")
     print("--------------------------------------------------")
     print(f"🛡️  SECONDARY CHECK (Content Line)")
-    print(f"    Fraud Risk     : {data['fraud_risk']}")
-    print(f"    Keywords Found : {data['risk_keywords']}")
+    print(f"    Detected Lang  : {data['detected_language']}")
+    print(f"    Keywords Found : {data['fraud_keywords']}")
     print("--------------------------------------------------")
     print(f"🚨 OVERALL VERDICT : {data['overall_risk']}")
     print(f"📝 TRANSCRIPT PREVIEW:")
-    print(f"   \"{data['transcript_preview']}\"")
+    print(f"   \"{data['transcription']}\"")
     print("--------------------------------------------------\n")
 
 def test_detect_url():
@@ -65,7 +68,7 @@ def test_detect_local_file(file_path):
 
 if __name__ == "__main__":
     # Test User's Local File
-    test_detect_local_file("/Users/rishitguha/Downloads/ElevenLabs_2026-02-01T13_17_32_Vanishree - Energetic Indian English_pvc_sp100_s50_sb75_se0_b_m2.mp3")
+    test_detect_local_file("/Users/rishitguha/Downloads/harnith.mp3")
     
     # Optional: Test URL
     # test_detect_url()
