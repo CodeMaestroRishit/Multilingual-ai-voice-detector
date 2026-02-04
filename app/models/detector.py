@@ -209,9 +209,9 @@ class VoiceDetector:
         raw_y, raw_sr = self._load_audio(input_audio)
         y, sr = self._preprocess_audio(raw_y, raw_sr)
         # --- Primary AI vs Human detection ---
-        # SUPER OPTIMIZATION: Hard cap to 10 seconds.
-        # 16000 Hz * 10 seconds = 160000 samples
-        max_samples = 16000 * 10
+        # SUPER OPTIMIZATION: Hard cap to 3 seconds.
+        # 16000 Hz * 3 seconds = 48000 samples
+        max_samples = 16000 * 3
         if len(y) > max_samples:
             y = y[:max_samples]
             
