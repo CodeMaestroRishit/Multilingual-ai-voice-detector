@@ -25,7 +25,13 @@ def health_check():
 
 app.include_router(api_router, prefix="")
 
-
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Secure Call AI Voice Detector API is running.",
+        "docs": "/docs"
+    }
 
 if __name__ == "__main__":
     import uvicorn
