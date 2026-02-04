@@ -292,16 +292,15 @@ class VoiceDetector:
             # Variance < 0.01 is often AI
             
             # Heuristic Score Calculation
-            score_smooth = max(0, (smoothness - 0.90) * 10) # 0.92->0.2, 0.95->0.5, 0.99->0.9
-            score_var = max(0, 1.0 - (time_variance * 50))  # 0.02->0, 0.005->0.75
+            # Lowered smoothness threshold from 0.90 to 0.88 to catch high-quality TTS
+            score_smooth = max(0, (smoothness - 0.88) * 10) 
+            score_var = max(0, 1.0 - (time_variance * 50))
             
             heuristic_score = (score_smooth + score_var) / 2.0
             heuristic_score = np.clip(heuristic_score, 0.0, 1.0)
             
         # --- Hybrid Fusion ---
         # 1. Pitch "Human Rescue" (Physics Check)
-        # Calculates F0 variance/jitter. Real vocal cords typically jitter.
-        # Use processed 'y' is safer for clean pitch tracking
         pitch_score, p_std, p_jitter = self._calculate_pitch_score(y, sr)
         
         print(f"DEBUG: Pitch Human Score: {pitch_score:.3f}, Heuristic AI Score: {heuristic_score:.3f}, Model AI Prob: {p_ai_model:.3f}")
@@ -309,19 +308,19 @@ class VoiceDetector:
         # Base Model Probability
         final_p_ai = p_ai_model
         
-        # 2. Heuristic Adjustments
-        if heuristic_score > 0.7:
+        # 2. Heuristic Adjustments (Boost AI score)
+        if heuristic_score > 0.5: # Lowered from 0.7 to 0.5 to catch more AI
              # Strong signal that audio is "Robotic/Smooth" -> Boost AI score
              final_p_ai = max(final_p_ai, heuristic_score)
              
         # 3. Human Rescue
-        if pitch_score > 0.75 and final_p_ai < 0.95:  # Stricter threshold, avoid overriding high confidence
+        # CRITICAL FIX: Do NOT rescue if Heuristics think it's AI (heuristic_score > 0.4)
+        # Only rescue if it looks Human AND Heuristics don't see robotic patterns.
+        if pitch_score > 0.75 and final_p_ai < 0.95 and heuristic_score < 0.4:
             # Cap AI probability if it's high
             if final_p_ai > 0.5:
-                # Strong Human Features detected.
-                # If model is confident (e.g. 0.9), but pitch is Human (0.8) -> Trust Pitch?
-                # Lowered influence to avoid false negatives on high-quality TTS
-                reduction_factor = pitch_score * 0.4 # up to 0.4 reduction
+                # Strong Human Features detected AND No Robotic Features.
+                reduction_factor = pitch_score * 0.4 
                 final_p_ai = max(0.1, final_p_ai - reduction_factor)
                 print(f"DEBUG: Human Rescue Triggered -> Pitch={pitch_score}, New Prob={final_p_ai}")
                 print(f"DEBUG: Before Return -> Pitch={pitch_score}, Smooth={smoothness}, Var={time_variance}, Probs={probs}")
