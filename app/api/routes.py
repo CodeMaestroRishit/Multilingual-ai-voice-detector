@@ -16,12 +16,27 @@ class DetectRequest(BaseModel):
 # Hackathon Exact Format
 class DetectResponse(BaseModel):
     classification: str       # "AI" | "Human"
-    confidence: float         # 0.0 - 1.0
-    explanation: str
-    fraud_risk: str           # "HIGH" | "LOW"
-    risk_keywords: List[str]
-    overall_risk: str         # "CRITICAL" | "SAFE"
-    transcript_preview: str   # Added Feature
+    confidence_score: float   # 0.0 - 1.0
+    ai_probability: float     # Raw AI probability
+    detected_language: str    # e.g. "en", "hi", "ta"
+    transcription: str        # Original transcription
+    english_translation: str  # English translation
+    fraud_keywords: List[str] # List of detected fraud keywords
+    overall_risk: str         # "HIGH" | "MEDIUM" | "LOW"
+    explanation: str          # Explanation string
+    # Diagnostics
+    audio_duration_seconds: float       # Duration of processed audio
+    num_chunks_processed: int           # Number of 30s chunks
+    chunk_ai_probabilities: List[float] # AI probability per chunk
+    # Deep Diagnostics
+    pitch_human_score: Optional[float] = 0.0
+    pitch_std: Optional[float] = 0.0
+    pitch_jitter: Optional[float] = 0.0
+    smoothness_score: Optional[float] = 0.0
+    variance_score: Optional[float] = 0.0
+    heuristic_score: Optional[float] = 0.0
+    debug_probs: Optional[List[float]] = []
+    debug_labels: Optional[dict] = {}
 
 @router.post("/detect", response_model=DetectResponse, dependencies=[Depends(verify_api_key)])
 async def detect_voice(request: DetectRequest):
@@ -40,7 +55,7 @@ async def detect_voice(request: DetectRequest):
 
     try:
         detector = get_detector()
-        result = detector.detect_fraud(audio_array, provided_transcript=request.transcript)
+        result = detector.detect_fraud(audio_array)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")

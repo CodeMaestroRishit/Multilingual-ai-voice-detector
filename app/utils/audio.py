@@ -5,6 +5,7 @@ import numpy as np
 import requests
 import soundfile as sf
 import torch
+import av
 from fastapi import HTTPException
 
 def load_audio_from_bytes(audio_bytes: bytes, target_sr: int = 16000) -> np.ndarray:
@@ -22,7 +23,40 @@ def load_audio_from_bytes(audio_bytes: bytes, target_sr: int = 16000) -> np.ndar
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=target_sr, mono=True)
         return y
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to decode audio: {str(e)}")
+        # Fallback to PyAV (ffmpeg-less decoding)
+        print(f"Librosa load failed: {e}. Trying PyAV...")
+        try:
+            return decode_with_pyav(audio_bytes)
+        except Exception as av_e:
+            raise HTTPException(status_code=400, detail=f"Failed to decode audio (Librosa & PyAV): {str(e)} | {str(av_e)}")
+
+def decode_with_pyav(audio_bytes: bytes, target_sr: int = 16000) -> np.ndarray:
+    """
+    Decodes audio using PyAV (ffmpeg wrapper).
+    Supports WebM, Opus, etc. without system ffmpeg.
+    """
+    try:
+        container = av.open(io.BytesIO(audio_bytes))
+        stream = container.streams.audio[0]
+        
+        resampler = av.AudioResampler(format='fltp', layout='mono', rate=target_sr)
+        
+        audio_data = []
+        for frame in container.decode(stream):
+            # Resample frame
+            resampled_frames = resampler.resample(frame)
+            if resampled_frames:
+                # To numpy
+                chunk = resampled_frames.to_ndarray() # shape (1, samples)
+                audio_data.append(chunk[0])
+                
+        if not audio_data:
+            raise ValueError("No audio data decoded")
+            
+        y = np.concatenate(audio_data)
+        return y
+    except Exception as e:
+        raise ValueError(f"PyAV decoding failed: {e}")
 
 def decode_base64_audio(b64_string: str) -> bytes:
     try:
