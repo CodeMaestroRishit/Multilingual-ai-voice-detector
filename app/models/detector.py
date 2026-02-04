@@ -31,8 +31,8 @@ class VoiceDetector:
         )
         self.model.eval()
         
-        # 2. Transcription and Translation (Whisper Medium)
-        self.whisper_model_name = "openai/whisper-medium"
+        # 2. Transcription and Translation (Whisper Tiny - Optimized for CPU/Hackathon Speed)
+        self.whisper_model_name = "openai/whisper-tiny"
         print(f"Loading Whisper Model: {self.whisper_model_name} ...")
         self.transcriber = pipeline(
             "automatic-speech-recognition",
