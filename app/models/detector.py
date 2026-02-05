@@ -9,6 +9,7 @@ import io
 import requests
 from transformers import Wav2Vec2FeatureExtractor, AutoModelForAudioClassification, pipeline
 import torch.nn.functional as F
+from fastapi import HTTPException
 
 class VoiceDetector:
     _instance = None
@@ -236,6 +237,9 @@ class VoiceDetector:
         probs = None
         pitch_score = 0.0
         snr_score = 0.0
+        metadata_hit = False
+        metadata_explanation = ""
+        metadata_note = None
         
         # --- Metadata Short-Circuit (Instant Speed + High Accuracy) ---
         if metadata:
@@ -245,35 +249,17 @@ class VoiceDetector:
             # "Lavf" = Libavformat (FFmpeg). Almost all API-generated audio uses this.
             # "LAME" = Encoder often used in programmatic generation.
             # Real recordings usually have "iTunes", "Android", or no encoder tag.
+            # Real recordings usually have "iTunes", "Android", or no encoder tag.
             if "lavf" in encoder or "lavc" in encoder or "google" in encoder:
-                print(f"DEBUG: METADATA HIT! Encoder={encoder}. Short-circuiting to AI.")
-                return {
-                    "classification": "AI",
-                    "confidence_score": 0.99,
-                    "ai_probability": 0.99,
-                    "detected_language": "N/A",
-                    "transcription": "",
-                    "english_translation": "",
-                    "fraud_keywords": [],
-                    "overall_risk": "HIGH",
-                    "explanation": f"Metadata analysis detected programmatic encoder: {metadata.get('encoder')}",
-                    "audio_duration_seconds": 0.0,
-                    "num_chunks_processed": 0,
-                    "chunk_ai_probabilities": [],
-                    "heuristic_score": 1.0,
-                    "pitch_human_score": 0.0,
-                    "pitch_std": 0.0,
-                    "pitch_jitter": 0.0,
-                    "smoothness_score": 1.0,
-                    "variance_score": 0.0,
-                    "snr_score": 0.0,
-                    "debug_probs": [],
-                    "debug_labels": {"info": "Metadata-Check"}
-                }
+                print(f"DEBUG: METADATA HIT! Encoder={encoder}. Marking as AI but continuing analysis.")
+                metadata_hit = True
+                metadata_explanation = f"Metadata analysis detected programmatic encoder: {metadata.get('encoder')}"
 
         # --- Audio Loading & Preprocessing ---
         raw_y, raw_sr = self._load_audio(input_audio)
         y, sr = self._preprocess_audio(raw_y, raw_sr)
+        if y is None or y.size == 0:
+            raise HTTPException(status_code=400, detail="Decoded audio contained no samples after preprocessing")
         
         # --- Primary AI vs Human detection ---
         # SUPER OPTIMIZATION: Increasing to 6 seconds for better context.
@@ -283,7 +269,9 @@ class VoiceDetector:
             y = y[:max_samples]
             
         # Re-chunking is trivial now (it will be 1 chunk)
-        chunks = self._chunk_audio(y, sr)  
+        chunks = [c for c in self._chunk_audio(y, sr) if len(c) > 0]
+        if not chunks:
+            raise HTTPException(status_code=400, detail="Audio contained no decodable frames")
         
         ai_probs = []
         
@@ -387,23 +375,25 @@ class VoiceDetector:
              final_p_ai = max(final_p_ai, boost)
 
         # B. Human Rescue (Pitch Physics + Background Noise)
-        # We need EITHER strong pitch evidence OR moderate pitch evidence + noise
+        # CRITICAL: Rescue ONLY if Model ALSO agrees (< 50% AI).
+        # High-quality AI (ElevenLabs) can fake pitch jitter, so we must respect the model.
         
         is_noisy_human = (snr_val < 25) # Natural background noise
         has_human_pitch = (pitch_score > 0.70) # Lowered from 0.75
+        model_says_human = (p_ai_model < 0.50) # Model must also lean Human
         
         # Rescue Conditions:
-        # 1. Strong Pitch Evidence
-        # 2. Moderate Pitch + Background Noise
+        # 1. Model says Human (<50%) AND Strong Pitch Evidence
+        # 2. Model says Human (<50%) AND Moderate Pitch + Background Noise
         
         should_rescue = False
         rescue_strength = 0.0
         
-        if has_human_pitch:
+        if model_says_human and has_human_pitch:
             should_rescue = True
             rescue_strength = pitch_score * 0.6 # Stronger rescue (was 0.5)
             
-        if is_noisy_human and pitch_score > 0.4:
+        if model_says_human and is_noisy_human and pitch_score > 0.4:
             # If it's noisy and has even mediocre pitch variance, it's likely human
             # (AI usually doesn't simulate background noise + pitch jitter together well)
             should_rescue = True
@@ -414,6 +404,11 @@ class VoiceDetector:
             final_p_ai = max(0.05, final_p_ai - rescue_strength)
             print(f"DEBUG: Human Rescue Triggered -> Pitch={pitch_score}, SNR={snr_val}, RescueStrength={rescue_strength:.2f}, {original_p:.2f}->{final_p_ai:.2f}")
 
+        # C. Metadata Note (no longer overrides classification)
+        # Metadata is treated as a weak prior only; audio evidence must exist.
+        if metadata_hit:
+            metadata_note = metadata_explanation or "Suspicious encoder metadata detected"
+            final_p_ai = min(1.0, final_p_ai + 0.1)
         
         classification = "AI" if final_p_ai > 0.5 else "Human"
         confidence = max(final_p_ai, 1 - final_p_ai)
@@ -432,6 +427,8 @@ class VoiceDetector:
         parts = []
         parts.append(f"AI probability {round(p_ai, 2)}")
         parts.append(f"Deepfake detector classified as {classification}")
+        if metadata_note:
+             parts.append(metadata_note)
         if heuristic_score > 0.5:
              parts.append("Robotic voice patterns detected")
         elif pitch_score > 0.75:
