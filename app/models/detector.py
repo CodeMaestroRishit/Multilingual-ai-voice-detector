@@ -262,9 +262,9 @@ class VoiceDetector:
             raise HTTPException(status_code=400, detail="Decoded audio contained no samples after preprocessing")
         
         # --- Primary AI vs Human detection ---
-        # AGGRESSIVE LATENCY: 3 seconds max for Railway timeout.
-        # 16000 Hz * 3 seconds = 48000 samples
-        max_samples = 16000 * 3
+        # TURBO MODE: 2 seconds max for Railway hackathon timeout.
+        # 16000 Hz * 2 seconds = 32000 samples
+        max_samples = 16000 * 2
         if len(y) > max_samples:
             y = y[:max_samples]
             
@@ -305,53 +305,20 @@ class VoiceDetector:
         # Aggregate
         p_ai_model = sum(ai_probs) / len(ai_probs) if ai_probs else 0.0
         
-        # --- LATENCY OPTIMIZATION: Skip expensive physics if model is confident ---
-        model_confident = (p_ai_model > 0.80) or (p_ai_model < 0.20)
-        
-        # --- Heuristic Analysis ---
+        # --- TURBO MODE: Skip ALL heuristics for maximum speed ---
+        # No embeddings, no pYIN, no SNR. Pure model-based classification.
         heuristic_score = 0.0
         smoothness = 0.0
         time_variance = 0.0
-        
-        # Only run expensive embedding analysis if model is NOT confident
-        if not model_confident and len(chunks) > 0:
-            print(f"DEBUG: Model uncertain ({p_ai_model:.2f}), running heuristics...")
-            # Re-run to get hidden states for smoothness/variance
-            chk = chunks[0]
-            with torch.no_grad():
-                inp = self.feature_extractor(chk, sampling_rate=sr, return_tensors="pt", padding=True)
-                out = self.model(**inp, output_hidden_states=True)
-                embeddings = out.hidden_states[-1] 
-            
-            np_embeds = embeddings[0].cpu().numpy()
-            time_variance = np.var(np_embeds, axis=0).mean()
-            smoothness = self._calculate_smoothness(embeddings)
-            
-            score_smooth = max(0, (smoothness - 0.92) * 10) 
-            score_var = max(0, 1.0 - (time_variance * 50))
-            heuristic_score = np.clip((score_smooth + score_var) / 2.0, 0.0, 1.0)
-        else:
-            print(f"DEBUG: Model confident ({p_ai_model:.2f}), skipping heuristics.")
-            
-        # --- Hybrid Fusion ---
-        # 1. Pitch "Human Rescue" (Physics Check) - SKIP if model confident
-        pitch_score, p_std, p_jitter = (0.0, 0.0, 0.0)
-        if not model_confident:
-            pitch_score, p_std, p_jitter = self._calculate_pitch_score(y, sr)
-        
-        # 2. SNR/Noise Analysis - SKIP if model confident
+        pitch_score = 0.0
+        p_std = 0.0
+        p_jitter = 0.0
         snr_val = 0.0
         snr_score = 0.0
-        if not model_confident:
-            snr_val = self._calculate_snr(y)
-            if snr_val > 50:
-                snr_score = 1.0
-            elif snr_val < 25:
-                snr_score = -1.0
-            
-        print(f"DEBUG: Physics -> PitchScore={pitch_score:.3f}, HeuristicAI={heuristic_score:.3f}, SNR={snr_val:.1f}, ModelProb={p_ai_model:.3f}")
         
-        # Base Model Probability
+        print(f"DEBUG: TURBO MODE -> ModelProb={p_ai_model:.3f}")
+        
+        # Base Model Probability (no adjustments in turbo mode)
         final_p_ai = p_ai_model
         
         # --- Heuristic Adjustments ---
