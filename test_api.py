@@ -10,11 +10,12 @@ def print_result(data, file_label):
     print("--------------------------------------------------")
     print(f"🎙️  PRIMARY CHECK (Voice Line)")
     print(f"    Classification : {data['classification'].upper()}")
-    print(f"    Confidence     : {int(data['confidence'] * 100)}%")
+    print(f"    Confidence     : {int(data.get('confidence_score', 0) * 100)}%")
     print(f"    Reasoning      : {data['explanation']}")
     print(f"    Debug Model    : Probs={data.get('debug_probs')}, Labels={data.get('debug_labels')}")
     print(f"    Physics        : Jitter={data.get('pitch_jitter',0)}Hz, Std={data.get('pitch_std',0)}Hz")
     print(f"    Heuristics     : PitchScore={data.get('pitch_human_score',0)}, Smooth={data.get('smoothness_score',0)}")
+    print(f"    New Metrics    : SNR={data.get('snr_score',0)}, Duration={data.get('audio_duration_seconds',0)}s")
     print("--------------------------------------------------")
     print(f"🛡️  SECONDARY CHECK (Content Line)")
     print(f"    Detected Lang  : {data['detected_language']}")
@@ -71,4 +72,4 @@ if __name__ == "__main__":
     test_detect_local_file("/Users/rishitguha/Downloads/harnith.mp3")
     
     # Optional: Test URL
-    # test_detect_url()
+    test_detect_url()

@@ -137,6 +137,38 @@ class VoiceDetector:
         similarity = self.cos_sim(embeddings[0, :-1, :], embeddings[0, 1:, :])
         return float(similarity.mean().item())
 
+    def _calculate_snr(self, y: np.ndarray) -> float:
+        """
+        Calculates Signal-to-Noise Ratio (SNR) of the audio.
+        High SNR (> 60dB) -> Studio quality (likely AI or studio rec).
+        Lower SNR (< 30dB) -> Natural background noise (likely Human).
+        """
+        # Simple energy-based estimation
+        # Assume lowest 10% energy frames are "noise" floor
+        if len(y) < 100:
+            return 0.0
+            
+        frame_length = 2048
+        hop_length = 512
+        rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)
+        rms_db = librosa.amplitude_to_db(rms, ref=np.max) # 0 dB is max
+        
+        # Sort frame energies
+        sorted_db = np.sort(rms_db[0])
+        
+        # Estimate noise floor (average of lowest 10% of frames)
+        # Avoid silence trimming artifacts by taking 5th to 15th percentile
+        noise_idx = int(len(sorted_db) * 0.1)
+        if noise_idx == 0: noise_idx = 1
+        noise_floor_db = np.mean(sorted_db[:noise_idx])
+        
+        # Signal power (average of top 20% of frames)
+        signal_idx = int(len(sorted_db) * 0.8)
+        signal_power_db = np.mean(sorted_db[signal_idx:])
+        
+        snr_value = signal_power_db - noise_floor_db
+        return float(snr_value)
+
     def _calculate_pitch_score(self, y, sr):
         """
         Estimates 'Human-ness' based on Pitch (F0) variance and jitter.
@@ -203,6 +235,7 @@ class VoiceDetector:
         heuristic_score = 0.0
         probs = None
         pitch_score = 0.0
+        snr_score = 0.0
         
         # --- Metadata Short-Circuit (Instant Speed + High Accuracy) ---
         if metadata:
@@ -233,8 +266,9 @@ class VoiceDetector:
                     "pitch_jitter": 0.0,
                     "smoothness_score": 1.0,
                     "variance_score": 0.0,
+                    "snr_score": 0.0,
                     "debug_probs": [],
-                    "debug_labels": "Metadata-Check"
+                    "debug_labels": {"info": "Metadata-Check"}
                 }
 
         # --- Audio Loading & Preprocessing ---
@@ -242,9 +276,9 @@ class VoiceDetector:
         y, sr = self._preprocess_audio(raw_y, raw_sr)
         
         # --- Primary AI vs Human detection ---
-        # SUPER OPTIMIZATION: Hard cap to 3 seconds.
-        # 16000 Hz * 3 seconds = 48000 samples
-        max_samples = 16000 * 3
+        # SUPER OPTIMIZATION: Increasing to 6 seconds for better context.
+        # 16000 Hz * 6 seconds = 96000 samples
+        max_samples = 16000 * 6
         if len(y) > max_samples:
             y = y[:max_samples]
             
@@ -325,26 +359,61 @@ class VoiceDetector:
         # 1. Pitch "Human Rescue" (Physics Check)
         pitch_score, p_std, p_jitter = self._calculate_pitch_score(y, sr)
         
-        print(f"DEBUG: Pitch Human Score: {pitch_score:.3f}, Heuristic AI Score: {heuristic_score:.3f}, Model AI Prob: {p_ai_model:.3f}")
+        # 2. SNR/Noise Analysis
+        snr_val = self._calculate_snr(y)
+        # SNR > 50dB is very clean (Suspicious/AI-like)
+        # SNR < 20dB is noisy (Likely Human)
+        if snr_val > 50:
+            snr_score = 1.0 # AI marker
+        elif snr_val < 25:
+            snr_score = -1.0 # Human marker (Negative favors human)
+        else:
+            snr_score = 0.0
+            
+        print(f"DEBUG: Physics -> PitchScore={pitch_score:.3f}, HeuristicAI={heuristic_score:.3f}, SNR={snr_val:.1f}, ModelProb={p_ai_model:.3f}")
         
         # Base Model Probability
         final_p_ai = p_ai_model
         
-        # 2. Heuristic Adjustments (Boost AI score)
-        if heuristic_score > 0.7: # Raised back to 0.7 to avoid over-triggering
-             # Strong signal that audio is "Robotic/Smooth" -> Boost AI score
-             final_p_ai = max(final_p_ai, heuristic_score)
+        # --- Heuristic Adjustments ---
+        
+        # A. Boost AI if Robotic (Smoothness + Variance + High SNR)
+        # If Heuristic Score is high AND audio is super clean -> Boost AI
+        if heuristic_score > 0.65: 
+             boost = heuristic_score
+             if snr_score > 0: # It's also super clean
+                 boost = min(1.0, boost + 0.1)
              
-        # 3. Human Rescue
-        # Removed strict heuristic block. Short clips might seem smooth but have human pitch.
-        if pitch_score > 0.75 and final_p_ai < 0.98: # Allow rescue even if model is 0.95 (up to 0.98 now)
-            # Cap AI probability if it's high
-            if final_p_ai > 0.5:
-                # Strong Human Features detected.
-                reduction_factor = pitch_score * 0.5 # Increased reduction slightly (0.4 -> 0.5)
-                final_p_ai = max(0.1, final_p_ai - reduction_factor)
-                print(f"DEBUG: Human Rescue Triggered -> Pitch={pitch_score}, New Prob={final_p_ai}")
-                print(f"DEBUG: Before Return -> Pitch={pitch_score}, Smooth={smoothness}, Var={time_variance}, Probs={probs}")
+             final_p_ai = max(final_p_ai, boost)
+
+        # B. Human Rescue (Pitch Physics + Background Noise)
+        # We need EITHER strong pitch evidence OR moderate pitch evidence + noise
+        
+        is_noisy_human = (snr_val < 25) # Natural background noise
+        has_human_pitch = (pitch_score > 0.70) # Lowered from 0.75
+        
+        # Rescue Conditions:
+        # 1. Strong Pitch Evidence
+        # 2. Moderate Pitch + Background Noise
+        
+        should_rescue = False
+        rescue_strength = 0.0
+        
+        if has_human_pitch:
+            should_rescue = True
+            rescue_strength = pitch_score * 0.6 # Stronger rescue (was 0.5)
+            
+        if is_noisy_human and pitch_score > 0.4:
+            # If it's noisy and has even mediocre pitch variance, it's likely human
+            # (AI usually doesn't simulate background noise + pitch jitter together well)
+            should_rescue = True
+            rescue_strength = max(rescue_strength, 0.4)
+            
+        if should_rescue and final_p_ai < 0.99: # Allow rescue even for high confidence
+            original_p = final_p_ai
+            final_p_ai = max(0.05, final_p_ai - rescue_strength)
+            print(f"DEBUG: Human Rescue Triggered -> Pitch={pitch_score}, SNR={snr_val}, RescueStrength={rescue_strength:.2f}, {original_p:.2f}->{final_p_ai:.2f}")
+
         
         classification = "AI" if final_p_ai > 0.5 else "Human"
         confidence = max(final_p_ai, 1 - final_p_ai)
@@ -367,6 +436,10 @@ class VoiceDetector:
              parts.append("Robotic voice patterns detected")
         elif pitch_score > 0.75:
              parts.append("Natural human pitch variations detected")
+        if snr_score < 0:
+             parts.append("Natural background noise detected")
+        elif snr_score > 0:
+             parts.append("Studio-quality silence detected")
         
         explanation = ", ".join(parts)
         
@@ -394,6 +467,7 @@ class VoiceDetector:
             "pitch_jitter": round(p_jitter, 2),
             "smoothness_score": round(smoothness, 4),
             "variance_score": round(time_variance, 5),
+            "snr_score": round(snr_val, 2) if 'snr_val' in locals() else 0.0,
             "debug_probs": [round(p, 4) for p in probs[0].tolist()] if probs is not None else [],
             "debug_labels": self.model.config.id2label if self.model.config.id2label else "None"
         }

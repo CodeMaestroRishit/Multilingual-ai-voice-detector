@@ -34,6 +34,7 @@ class DetectResponse(BaseModel):
     pitch_jitter: Optional[float] = 0.0
     smoothness_score: Optional[float] = 0.0
     variance_score: Optional[float] = 0.0
+    snr_score: Optional[float] = 0.0
     heuristic_score: Optional[float] = 0.0
     debug_probs: Optional[List[float]] = []
     debug_labels: Optional[dict] = {}
@@ -108,8 +109,8 @@ async def detect_voice_strict(request: HackathonRequest):
         # It handles base64 decoding.
         
         # NOTE: process_audio_input returns (numpy array, metadata)
-        # OPTIMIZATION: Decode ONLY 4 seconds max to prevent timeouts on large files
-        audio_array, metadata = process_audio_input(request.audioBase64, None, max_duration=4.0)
+        # OPTIMIZATION: Decode ONLY 6 seconds max to prevent timeouts on large files
+        audio_array, metadata = process_audio_input(request.audioBase64, None, max_duration=6.0)
         
         # 3. Detect
         detector = get_detector()
