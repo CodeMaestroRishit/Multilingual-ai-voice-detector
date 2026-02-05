@@ -47,7 +47,7 @@ async def detect_voice(request: DetectRequest):
         )
     
     try:
-        audio_array = process_audio_input(request.audio_base64, request.audio_url)
+        audio_array, metadata = process_audio_input(request.audio_base64, request.audio_url)
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -55,7 +55,7 @@ async def detect_voice(request: DetectRequest):
 
     try:
         detector = get_detector()
-        result = detector.detect_fraud(audio_array)
+        result = detector.detect_fraud(audio_array, metadata)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
@@ -107,12 +107,13 @@ async def detect_voice_strict(request: HackathonRequest):
         # process_audio_input expects (audio_base64, audio_url)
         # It handles base64 decoding.
         
-        # NOTE: process_audio_input returns numpy array
-        audio_array = process_audio_input(request.audioBase64, None)
+        # NOTE: process_audio_input returns (numpy array, metadata)
+        # OPTIMIZATION: Decode ONLY 4 seconds max to prevent timeouts on large files
+        audio_array, metadata = process_audio_input(request.audioBase64, None, max_duration=4.0)
         
         # 3. Detect
         detector = get_detector()
-        result = detector.detect_fraud(audio_array)
+        result = detector.detect_fraud(audio_array, metadata)
         
         # 4. Map Result
         # result: {"classification": "AI"|"Human", "confidence_score": 0.xx, "explanation": "..."}
