@@ -262,9 +262,9 @@ class VoiceDetector:
             raise HTTPException(status_code=400, detail="Decoded audio contained no samples after preprocessing")
         
         # --- Primary AI vs Human detection ---
-        # SUPER OPTIMIZATION: Increasing to 6 seconds for better context.
-        # 16000 Hz * 6 seconds = 96000 samples
-        max_samples = 16000 * 6
+        # LATENCY OPTIMIZATION: 4 seconds max for faster response.
+        # 16000 Hz * 4 seconds = 64000 samples
+        max_samples = 16000 * 4
         if len(y) > max_samples:
             y = y[:max_samples]
             
@@ -305,58 +305,49 @@ class VoiceDetector:
         # Aggregate
         p_ai_model = sum(ai_probs) / len(ai_probs) if ai_probs else 0.0
         
-        # --- Heuristic Analysis ---
-        # Get embeddings from the last chunk for heuristic analysis (or average if feasible, but last is simpler)
-        # We need to run the feature extractor again if we didn't save embeddings, 
-        # BUT we can just run it on the full audio or a representative chunk.
-        # Let's run on the first chunk for efficiency.
+        # --- LATENCY OPTIMIZATION: Skip expensive physics if model is confident ---
+        model_confident = (p_ai_model > 0.85) or (p_ai_model < 0.15)
         
+        # --- Heuristic Analysis ---
         heuristic_score = 0.0
-        print(f"DEBUG: Num Chunks: {len(chunks)}")
-        if len(chunks) > 0:
-            print(f"DEBUG: Entering heuristic block. Num chunks: {len(chunks)}")
+        smoothness = 0.0
+        time_variance = 0.0
+        
+        # Only run expensive embedding analysis if model is NOT confident
+        if not model_confident and len(chunks) > 0:
+            print(f"DEBUG: Model uncertain ({p_ai_model:.2f}), running heuristics...")
             # Re-run to get hidden states for smoothness/variance
             chk = chunks[0]
             with torch.no_grad():
                 inp = self.feature_extractor(chk, sampling_rate=sr, return_tensors="pt", padding=True)
                 out = self.model(**inp, output_hidden_states=True)
-                # Wav2Vec2 hidden states are a tuple, taking the last one
                 embeddings = out.hidden_states[-1] 
             
-            # 1. Variance (Richness)
-            # Real voices have high variance. AI is flatter.
             np_embeds = embeddings[0].cpu().numpy()
             time_variance = np.var(np_embeds, axis=0).mean()
-            
-            # 2. Smoothness (Robotic consistency)
             smoothness = self._calculate_smoothness(embeddings)
             
-            # Normalization (Approximate based on XLS-R behavior)
-            # Smoothness > 0.92 is often AI
-            # Variance < 0.01 is often AI
-            
-            # Heuristic Score Calculation
-            # Raised smoothness threshold back to 0.92 to avoid false positives on short clips
             score_smooth = max(0, (smoothness - 0.92) * 10) 
             score_var = max(0, 1.0 - (time_variance * 50))
-            
-            heuristic_score = (score_smooth + score_var) / 2.0
-            heuristic_score = np.clip(heuristic_score, 0.0, 1.0)
+            heuristic_score = np.clip((score_smooth + score_var) / 2.0, 0.0, 1.0)
+        else:
+            print(f"DEBUG: Model confident ({p_ai_model:.2f}), skipping heuristics.")
             
         # --- Hybrid Fusion ---
-        # 1. Pitch "Human Rescue" (Physics Check)
-        pitch_score, p_std, p_jitter = self._calculate_pitch_score(y, sr)
+        # 1. Pitch "Human Rescue" (Physics Check) - SKIP if model confident
+        pitch_score, p_std, p_jitter = (0.0, 0.0, 0.0)
+        if not model_confident:
+            pitch_score, p_std, p_jitter = self._calculate_pitch_score(y, sr)
         
-        # 2. SNR/Noise Analysis
-        snr_val = self._calculate_snr(y)
-        # SNR > 50dB is very clean (Suspicious/AI-like)
-        # SNR < 20dB is noisy (Likely Human)
-        if snr_val > 50:
-            snr_score = 1.0 # AI marker
-        elif snr_val < 25:
-            snr_score = -1.0 # Human marker (Negative favors human)
-        else:
-            snr_score = 0.0
+        # 2. SNR/Noise Analysis - SKIP if model confident
+        snr_val = 0.0
+        snr_score = 0.0
+        if not model_confident:
+            snr_val = self._calculate_snr(y)
+            if snr_val > 50:
+                snr_score = 1.0
+            elif snr_val < 25:
+                snr_score = -1.0
             
         print(f"DEBUG: Physics -> PitchScore={pitch_score:.3f}, HeuristicAI={heuristic_score:.3f}, SNR={snr_val:.1f}, ModelProb={p_ai_model:.3f}")
         
