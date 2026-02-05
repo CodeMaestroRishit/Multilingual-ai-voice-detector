@@ -262,9 +262,9 @@ class VoiceDetector:
             raise HTTPException(status_code=400, detail="Decoded audio contained no samples after preprocessing")
         
         # --- Primary AI vs Human detection ---
-        # LATENCY OPTIMIZATION: 4 seconds max for faster response.
-        # 16000 Hz * 4 seconds = 64000 samples
-        max_samples = 16000 * 4
+        # AGGRESSIVE LATENCY: 3 seconds max for Railway timeout.
+        # 16000 Hz * 3 seconds = 48000 samples
+        max_samples = 16000 * 3
         if len(y) > max_samples:
             y = y[:max_samples]
             
@@ -306,7 +306,7 @@ class VoiceDetector:
         p_ai_model = sum(ai_probs) / len(ai_probs) if ai_probs else 0.0
         
         # --- LATENCY OPTIMIZATION: Skip expensive physics if model is confident ---
-        model_confident = (p_ai_model > 0.85) or (p_ai_model < 0.15)
+        model_confident = (p_ai_model > 0.80) or (p_ai_model < 0.20)
         
         # --- Heuristic Analysis ---
         heuristic_score = 0.0
